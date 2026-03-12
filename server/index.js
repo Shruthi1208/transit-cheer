@@ -1,10 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { existsSync } from 'fs';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
@@ -684,6 +679,8 @@ app.get('/api/stats', (req, res) => {
   res.json({ totalCities: CITY_IDS.length, totalRoutes: ROUTES.length, totalStops, totalBuses: buses.length, totalWaiting, highCrowdStops, cityStats });
 });
 
+const PORT = 3001;
+app.listen(PORT, '0.0.0.0', () => console.log(`RTC API running on port ${PORT} — ${ROUTES.length} routes, ${buses.length} buses, ${Object.keys(CITIES).length} cities`));
 
 // ─── Trip Planner ─────────────────────────────────────────────────────────────
 // POST /api/trip  { originLat, originLng, destLat, destLng, cityId? }
@@ -1007,13 +1004,3 @@ app.get('/api/analytics', (req, res) => {
 
   res.json({ weeklyRidership, routeOTP, driverPerf, cityBreakdown, hourlyDist, summary: { totalPassengers, totalCO2Saved, avgOTP, totalTrips: Math.round(totalPassengers / 40), activeRoutes: routes.length, activeBuses: buses.filter(b => !cityId || b.cityId === cityId).length } });
 });
-
-// ─── Serve built frontend in production (must be after all API routes) ─────────
-const distPath = join(__dirname, '..', 'dist');
-if (existsSync(distPath)) {
-  app.use(express.static(distPath));
-  app.get('*', (_req, res) => res.sendFile(join(distPath, 'index.html')));
-}
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => console.log(`RTC API running on port ${PORT} — ${ROUTES.length} routes, ${buses.length} buses, ${Object.keys(CITIES).length} cities`));
