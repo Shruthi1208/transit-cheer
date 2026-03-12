@@ -24,6 +24,12 @@ export const api = {
     req<{ success: boolean; passengerCount: number }>('DELETE', `/stops/${stopId}/queue/${passengerId}`, null),
   findNearest: (lat: number, lng: number, cityId?: string) =>
     req<NearestResult>('POST', '/route/nearest', { lat, lng, cityId }),
+  planTrip: (originLat: number, originLng: number, destLat: number, destLng: number, cityId?: string) =>
+    req<TripPlan>('POST', '/trip', { originLat, originLng, destLat, destLng, cityId }),
+  getHeatmap: (cityId?: string) =>
+    req<HeatmapData>('GET', cityId ? `/heatmap?cityId=${cityId}` : '/heatmap'),
+  getSkipSuggestions: (busId: string) =>
+    req<SkipSuggestions>('GET', `/buses/${busId}/skip-suggestions`),
 };
 
 export interface City {
@@ -129,4 +135,61 @@ export interface Co2Data {
   savedVsCar: number;
   savedVsAuto: number;
   distanceKm: number;
+}
+
+export interface TripPlan {
+  type: 'direct' | 'no-direct-route';
+  message?: string;
+  route?: { id: string; name: string; color: string; cityId: string; description: string };
+  city?: City;
+  boardStop?: StopWithCrowd;
+  alightStop?: StopWithCrowd;
+  intermediateStops?: (StopWithCrowd & { etaMinutes: number })[];
+  walkToStop?: { distanceKm: number; minutes: number };
+  walkFromStop?: { distanceKm: number; minutes: number };
+  routeDistanceKm?: number;
+  totalDistanceKm?: number;
+  estimatedMinutes?: number;
+  co2?: Co2Data;
+  nearestToOrigin?: { stop: StopWithCrowd; route: { id: string; name: string; color: string } } | null;
+  nearestToDest?: { stop: StopWithCrowd; route: { id: string; name: string; color: string } } | null;
+}
+
+export interface HeatmapStop extends Stop {
+  passengerCount: number;
+  forecastedCount: number;
+  crowdLevel: 'low' | 'medium' | 'high';
+  forecastedCrowdLevel: 'low' | 'medium' | 'high';
+  timeSlot: string;
+  forecast: Record<string, number>;
+  routeId: string;
+  routeName: string;
+  cityId: string;
+  cityName: string;
+  intensity: number;
+}
+
+export interface HeatmapData {
+  stops: HeatmapStop[];
+  timeSlot: string;
+  currentHour: number;
+  hourlyDemand: { slot: string; multiplier: number; label: string }[];
+}
+
+export interface SkipSuggestion {
+  stop: StopWithCrowd;
+  stopsAway: number;
+  etaMinutes: number;
+  action: 'STOP' | 'SKIP' | 'PRIORITY STOP';
+  reason: string;
+  priority: 'low' | 'normal' | 'medium' | 'high';
+}
+
+export interface SkipSuggestions {
+  busId: string;
+  busNumber: string;
+  routeName: string;
+  suggestions: SkipSuggestion[];
+  skipCount: number;
+  estimatedTimeSavedMin: number;
 }

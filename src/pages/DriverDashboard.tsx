@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Bus, MapPin, Users, Navigation, Clock, Leaf, AlertTriangle, Crosshair } from 'lucide-react';
+import { Bus, MapPin, Users, Navigation, Clock, Leaf, AlertTriangle, Crosshair, SkipForward, CheckCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import StatCard from '@/components/StatCard';
 import StatusBadge from '@/components/StatusBadge';
 import InteractiveMap from '@/components/InteractiveMap';
 import CitySelector from '@/components/CitySelector';
-import { api, type Route, type Bus as BusType, type NearestResult } from '@/lib/api';
+import { api, type Route, type Bus as BusType, type NearestResult, type SkipSuggestions } from '@/lib/api';
 import { useCity } from '@/context/CityContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,13 @@ import { Label } from '@/components/ui/label';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const CO2_COLORS: Record<string, string> = { Bus: '#10B981', Car: '#EF4444', Auto: '#F59E0B', Walk: '#6B7280' };
+
+type PanelTab = 'skip' | 'stops' | 'co2';
+const PANEL_TABS = [
+  { id: 'skip'  as PanelTab, label: 'STOP/SKIP Engine', Icon: SkipForward },
+  { id: 'stops' as PanelTab, label: 'Upcoming Stops',   Icon: MapPin },
+  { id: 'co2'   as PanelTab, label: 'CO₂ Chart',        Icon: Leaf },
+];
 
 export default function DriverDashboard() {
   const { selectedCity } = useCity();
@@ -23,6 +30,7 @@ export default function DriverDashboard() {
   const [nearest, setNearest] = useState<NearestResult | null>(null);
   const [loadingNearest, setLoadingNearest] = useState(false);
   const [selectedPin, setSelectedPin] = useState<{ lat: number; lng: number; label?: string } | null>(null);
+  const [rightPanel, setRightPanel] = useState<'stops' | 'skip' | 'co2'>('skip');
 
   const { data: routes = [] } = useQuery<Route[]>({
     queryKey: ['/api/routes', selectedCity?.id ?? 'all'],
@@ -83,6 +91,13 @@ export default function DriverDashboard() {
 
   const displayRouteForMap = nearest ? routes.find(r => r.id === nearest.route.id) || displayRoute : displayRoute;
   const displayBusesForMap = buses.filter(b => b.routeId === (displayRouteForMap?.id ?? effectiveRouteId));
+
+  const { data: skipData } = useQuery<SkipSuggestions>({
+    queryKey: ['/api/buses', activeBus?.id ?? '', 'skip-suggestions'],
+    queryFn: () => api.getSkipSuggestions(activeBus!.id),
+    enabled: !!activeBus?.id,
+    refetchInterval: 15000,
+  });
 
   return (
     <div className="min-h-screen bg-background">
@@ -174,10 +189,72 @@ export default function DriverDashboard() {
           </div>
 
           {/* Right panel */}
-          <div className="lg:col-span-2 space-y-5">
-            <div className="space-y-2">
-              <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground">Upcoming Stops</h2>
-              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+          <div className="lg:col-span-2 space-y-4">
+            {/* Panel tabs */}
+            <div className="flex gap-1 p-1 rounded-xl bg-muted/50 border border-border">
+              {PANEL_TABS.map(({ id, label, Icon }) => (
+                <button key={id} data-testid={`panel-tab-${id}`}
+                  onClick={() => setRightPanel(id)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-all ${rightPanel === id ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:block">{label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* STOP/SKIP Engine */}
+            {rightPanel === 'skip' && (
+              <div className="space-y-2">
+                {skipData && (
+                  <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs flex items-center gap-3">
+                    <SkipForward className="w-4 h-4 text-blue-600 shrink-0" />
+                    <div>
+                      <span className="font-bold text-blue-700 dark:text-blue-400">Bus {skipData.busNumber}</span>
+                      <span className="text-muted-foreground"> · {skipData.skipCount} skippable stops</span>
+                      {skipData.estimatedTimeSavedMin > 0 && <span className="text-green-600 font-semibold"> · saves ~{skipData.estimatedTimeSavedMin} min</span>}
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
+                  {(skipData?.suggestions ?? (nearest ? nearest.remainingStops : displayRoute?.stops ?? []).map((stop, i) => ({
+                    stop, stopsAway: i, etaMinutes: Math.round(i * 2.5),
+                    action: stop.passengerCount === 0 ? 'SKIP' : stop.crowdLevel === 'high' ? 'PRIORITY STOP' : 'STOP',
+                    reason: stop.passengerCount === 0 ? 'No passengers waiting' : `${stop.passengerCount} passengers waiting`,
+                    priority: stop.passengerCount === 0 ? 'low' : stop.crowdLevel === 'high' ? 'high' : 'normal',
+                  }))).map((s) => (
+                    <div key={s.stop.id} data-testid={`skip-row-${s.stop.id}`}
+                      className={`glass-card rounded-lg px-3 py-2.5 flex items-center gap-3 ${
+                        s.action === 'PRIORITY STOP' ? 'border-red-300/50 bg-red-50/30 dark:bg-red-950/20' :
+                        s.action === 'SKIP' ? 'border-muted bg-muted/20 opacity-70' : ''
+                      }`}>
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold ${
+                        s.action === 'PRIORITY STOP' ? 'bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-400' :
+                        s.action === 'SKIP' ? 'bg-gray-100 text-gray-400 dark:bg-gray-800' :
+                        'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-400'
+                      }`}>
+                        {s.action === 'PRIORITY STOP' ? '🔴' : s.action === 'SKIP' ? '⏭' : '✓'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium leading-tight truncate">{s.stop.name}</p>
+                          <span className={`text-xs font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
+                            s.action === 'PRIORITY STOP' ? 'bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-400' :
+                            s.action === 'SKIP' ? 'bg-gray-100 text-gray-500 dark:bg-gray-800' :
+                            'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-400'
+                          }`}>{s.action}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{s.reason} · {s.etaMinutes}min</p>
+                      </div>
+                    </div>
+                  ))}
+                  {!skipData && !displayRoute && <p className="text-sm text-muted-foreground italic px-1 py-4 text-center">Select a route to see STOP/SKIP recommendations</p>}
+                </div>
+              </div>
+            )}
+
+            {/* Upcoming Stops */}
+            {rightPanel === 'stops' && (
+              <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
                 {(nearest ? nearest.remainingStops : displayRoute?.stops ?? []).map((stop, i) => (
                   <div key={stop.id} data-testid={`stop-row-${stop.id}`}
                     className={`glass-card rounded-lg px-3 py-2.5 flex items-center justify-between ${stop.id === currentStop?.id ? 'border-primary/40 bg-primary/5' : ''}`}>
@@ -195,43 +272,45 @@ export default function DriverDashboard() {
                   </div>
                 ))}
               </div>
-            </div>
+            )}
 
-            <div className="space-y-2">
-              <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <Leaf className="w-4 h-4 text-green-500" /> CO₂ Emissions (kg)
-              </h2>
-              <div className="glass-card rounded-xl p-4 space-y-3">
-                <p className="text-xs text-muted-foreground">{routeDistKm.toFixed(1)} km route · per journey</p>
-                <ResponsiveContainer width="100%" height={120}>
-                  <BarChart data={co2Data} margin={{ top: 0, right: 0, left: -22, bottom: 0 }}>
-                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(v: number) => [`${v} kg CO₂`, '']} />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                      {co2Data.map(e => <Cell key={e.name} fill={CO2_COLORS[e.name] ?? '#94A3B8'} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400 font-medium bg-green-50 dark:bg-green-950/30 rounded-lg px-3 py-2">
-                  <Leaf className="w-3.5 h-3.5" />
-                  Bus saves <b>{savedVsCar} kg CO₂</b> vs car on this route
+            {/* CO₂ */}
+            {rightPanel === 'co2' && (
+              <div className="space-y-3">
+                <div className="glass-card rounded-xl p-4 space-y-3">
+                  <p className="text-xs text-muted-foreground">{routeDistKm.toFixed(1)} km route · per journey</p>
+                  <ResponsiveContainer width="100%" height={150}>
+                    <BarChart data={co2Data} margin={{ top: 0, right: 0, left: -22, bottom: 0 }}>
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(v: number) => [`${v} kg CO₂`, '']} />
+                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                        {co2Data.map(e => <Cell key={e.name} fill={CO2_COLORS[e.name] ?? '#94A3B8'} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400 font-medium bg-green-50 dark:bg-green-950/30 rounded-lg px-3 py-2">
+                    <Leaf className="w-3.5 h-3.5" />
+                    Bus saves <b>{savedVsCar} kg CO₂</b> vs car on this route
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">High Crowd Alerts</h3>
+                  {(nearest ? nearest.remainingStops : displayRoute?.stops ?? []).filter(s => s.crowdLevel === 'high').slice(0, 4).map(stop => (
+                    <div key={stop.id} className="glass-card rounded-lg p-3 flex items-start gap-3 border-transit-crowded/30">
+                      <AlertTriangle className="w-4 h-4 text-transit-crowded mt-0.5 shrink-0" />
+                      <p className="text-sm"><b>{stop.name}</b> — {stop.passengerCount} waiting</p>
+                    </div>
+                  ))}
+                  {(nearest ? nearest.remainingStops : displayRoute?.stops ?? []).filter(s => s.crowdLevel === 'high').length === 0 && (
+                    <div className="glass-card rounded-lg p-3 flex items-center gap-2 border-green-200 dark:border-green-800 bg-green-50/30 dark:bg-green-950/20">
+                      <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                      <p className="text-sm text-green-700 dark:text-green-400">No high-crowd stops on this route</p>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground">High Crowd Alerts</h2>
-              {(nearest ? nearest.remainingStops : displayRoute?.stops ?? []).filter(s => s.crowdLevel === 'high').slice(0, 3).map(stop => (
-                <div key={stop.id} className="glass-card rounded-lg p-3 flex items-start gap-3 border-transit-crowded/30">
-                  <AlertTriangle className="w-4 h-4 text-transit-crowded mt-0.5 shrink-0" />
-                  <p className="text-sm"><b>{stop.name}</b> — {stop.passengerCount} passengers waiting</p>
-                </div>
-              ))}
-              {(nearest ? nearest.remainingStops : displayRoute?.stops ?? []).filter(s => s.crowdLevel === 'high').length === 0 && (
-                <p className="text-sm text-muted-foreground italic px-1">No high-crowd alerts ✓</p>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </main>

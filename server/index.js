@@ -681,3 +681,186 @@ app.get('/api/stats', (req, res) => {
 
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => console.log(`RTC API running on port ${PORT} — ${ROUTES.length} routes, ${buses.length} buses, ${Object.keys(CITIES).length} cities`));
+
+// ─── Trip Planner ─────────────────────────────────────────────────────────────
+// POST /api/trip  { originLat, originLng, destLat, destLng, cityId? }
+app.post('/api/trip', (req, res) => {
+  const { originLat, originLng, destLat, destLng, cityId } = req.body;
+  if (!originLat || !originLng || !destLat || !destLng)
+    return res.status(400).json({ error: 'originLat, originLng, destLat, destLng required' });
+
+  const oLat = parseFloat(originLat), oLng = parseFloat(originLng);
+  const dLat = parseFloat(destLat), dLng = parseFloat(destLng);
+
+  let filteredRoutes = cityId ? ROUTES.filter(r => r.cityId === cityId) : ROUTES;
+
+  // Try direct route first
+  let best = null;
+  let bestScore = Infinity;
+
+  filteredRoutes.forEach(route => {
+    const stopsLen = route.stops.length;
+    let minOriginDist = Infinity, originIdx = -1;
+    let minDestDist = Infinity, destIdx = -1;
+
+    route.stops.forEach((stop, i) => {
+      const od = haversineKm(oLat, oLng, stop.lat, stop.lng);
+      const dd = haversineKm(dLat, dLng, stop.lat, stop.lng);
+      if (od < minOriginDist) { minOriginDist = od; originIdx = i; }
+      if (dd < minDestDist) { minDestDist = dd; destIdx = i; }
+    });
+
+    if (originIdx === -1 || destIdx === -1 || originIdx >= destIdx) return;
+
+    const boardStop = route.stops[originIdx];
+    const alightStop = route.stops[destIdx];
+    const routeStops = route.stops.slice(originIdx, destIdx + 1);
+    const routeDist = routeDistanceKm(routeStops);
+    const totalWalkKm = minOriginDist + minDestDist;
+    const totalDist = routeDist + totalWalkKm;
+    const score = totalDist + minOriginDist * 2 + minDestDist * 2;
+
+    if (score < bestScore) {
+      bestScore = score;
+      best = {
+        type: 'direct',
+        route: { id: route.id, name: route.name, color: route.color, cityId: route.cityId, description: route.description },
+        city: CITIES[route.cityId],
+        boardStop: enrichStop(boardStop),
+        alightStop: enrichStop(alightStop),
+        intermediateStops: routeStops.map((s, i) => ({ ...enrichStop(s), etaMinutes: Math.round(i * 1.5 * 60 / 35) })),
+        walkToStop: { distanceKm: +minOriginDist.toFixed(3), minutes: Math.round(minOriginDist / 0.08) },
+        walkFromStop: { distanceKm: +minDestDist.toFixed(3), minutes: Math.round(minDestDist / 0.08) },
+        routeDistanceKm: +routeDist.toFixed(2),
+        totalDistanceKm: +totalDist.toFixed(2),
+        estimatedMinutes: Math.round(routeDist / 35 * 60) + Math.round(minOriginDist / 0.08) + Math.round(minDestDist / 0.08),
+        co2: co2Comparison(routeDist),
+      };
+    }
+  });
+
+  if (!best) {
+    // Fallback: return nearest stops to origin and destination separately
+    const nearO = findNearestStop(oLat, oLng, cityId || null);
+    const nearD = findNearestStop(dLat, dLng, cityId || null);
+    return res.status(200).json({
+      type: 'no-direct-route',
+      message: 'No direct bus route found. Consider a transfer.',
+      nearestToOrigin: nearO ? { stop: enrichStop(nearO.stop), route: { id: nearO.route.id, name: nearO.route.name, color: nearO.route.color } } : null,
+      nearestToDest: nearD ? { stop: enrichStop(nearD.stop), route: { id: nearD.route.id, name: nearD.route.name, color: nearD.route.color } } : null,
+    });
+  }
+
+  res.json(best);
+});
+
+// ─── Demand Heatmap ────────────────────────────────────────────────────────────
+// GET /api/heatmap?cityId=HYD
+app.get('/api/heatmap', (req, res) => {
+  const { cityId } = req.query;
+  const hour = new Date().getHours();
+
+  // Time-of-day multipliers
+  const timeSlot = hour < 5 ? 'night' : hour < 9 ? 'morning-peak' : hour < 12 ? 'mid-morning' :
+    hour < 14 ? 'lunch' : hour < 17 ? 'afternoon' : hour < 20 ? 'evening-peak' : hour < 22 ? 'evening' : 'night';
+
+  const multipliers = {
+    'night': 0.05, 'morning-peak': 1.8, 'mid-morning': 0.9, 'lunch': 1.1,
+    'afternoon': 0.7, 'evening-peak': 1.9, 'evening': 0.6,
+  };
+
+  const mult = multipliers[timeSlot] || 1;
+
+  let routes = ROUTES;
+  if (cityId) routes = routes.filter(r => r.cityId === cityId);
+
+  const seen = new Set();
+  const stops = [];
+  routes.forEach(route => {
+    route.stops.forEach(stop => {
+      if (seen.has(stop.id)) return;
+      seen.add(stop.id);
+      const base = crowdCounts[stop.id] || 0;
+      const forecast = {
+        '05:00–09:00': Math.round(base * 1.8),
+        '09:00–12:00': Math.round(base * 0.9),
+        '12:00–14:00': Math.round(base * 1.1),
+        '14:00–17:00': Math.round(base * 0.7),
+        '17:00–20:00': Math.round(base * 1.9),
+        '20:00–22:00': Math.round(base * 0.6),
+        '22:00–05:00': Math.round(base * 0.05),
+      };
+      stops.push({
+        ...stop,
+        passengerCount: base,
+        forecastedCount: Math.round(base * mult),
+        crowdLevel: crowdLevel(base),
+        forecastedCrowdLevel: crowdLevel(Math.round(base * mult)),
+        timeSlot,
+        forecast,
+        routeId: route.id,
+        routeName: route.name,
+        cityId: route.cityId,
+        cityName: CITIES[route.cityId]?.name,
+        intensity: Math.min(base / 30, 1),
+      });
+    });
+  });
+
+  const hourlyDemand = Object.entries({
+    '05:00–09:00': Math.round(1.8 * 10),
+    '09:00–12:00': Math.round(0.9 * 10),
+    '12:00–14:00': Math.round(1.1 * 10),
+    '14:00–17:00': Math.round(0.7 * 10),
+    '17:00–20:00': Math.round(1.9 * 10),
+    '20:00–22:00': Math.round(0.6 * 10),
+    '22:00–05:00': Math.round(0.05 * 10),
+  }).map(([slot, multiplier]) => ({ slot, multiplier, label: slot }));
+
+  res.json({ stops, timeSlot, currentHour: hour, hourlyDemand });
+});
+
+// ─── Skip Suggestion Engine ────────────────────────────────────────────────────
+// GET /api/buses/:busId/skip-suggestions
+app.get('/api/buses/:busId/skip-suggestions', (req, res) => {
+  const bus = buses.find(b => b.id === req.params.busId);
+  if (!bus) return res.status(404).json({ error: 'Bus not found' });
+
+  const route = ROUTES.find(r => r.id === bus.routeId);
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+
+  const upcoming = route.stops.slice(bus.currentStopIdx);
+  const suggestions = upcoming.map((stop, i) => {
+    const crowd = crowdCounts[stop.id] || 0;
+    const cl = crowdLevel(crowd);
+    let action = 'STOP';
+    let reason = `${crowd} passengers waiting`;
+    let priority = 'normal';
+
+    if (crowd === 0) {
+      action = 'SKIP';
+      reason = 'No passengers waiting — save 2–3 minutes';
+      priority = 'low';
+    } else if (cl === 'high') {
+      action = 'PRIORITY STOP';
+      reason = `${crowd} passengers — high demand, extend dwell time`;
+      priority = 'high';
+    } else if (cl === 'medium') {
+      priority = 'medium';
+    }
+
+    return {
+      stop: enrichStop(stop),
+      stopsAway: i,
+      etaMinutes: Math.round(i * 1.5 * 60 / 35),
+      action,
+      reason,
+      priority,
+    };
+  });
+
+  const skipCount = suggestions.filter(s => s.action === 'SKIP').length;
+  const timeSaved = skipCount * 2.5;
+
+  res.json({ busId: bus.id, busNumber: bus.number, routeName: route.name, suggestions, skipCount, estimatedTimeSavedMin: +timeSaved.toFixed(1) });
+});

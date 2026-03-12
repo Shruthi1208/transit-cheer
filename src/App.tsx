@@ -9,6 +9,8 @@ import DriverDashboard from "./pages/DriverDashboard";
 import PassengerInterface from "./pages/PassengerInterface";
 import BusStopScreen from "./pages/BusStopScreen";
 import AdminDashboard from "./pages/AdminDashboard";
+import TripPlanner from "./pages/TripPlanner";
+import CrowdHeatmap from "./pages/CrowdHeatmap";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +28,8 @@ const App = () => (
             <Route path="/passenger" element={<PassengerInterface />} />
             <Route path="/bus-stop" element={<BusStopScreen />} />
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/trip-planner" element={<TripPlanner />} />
+            <Route path="/heatmap" element={<CrowdHeatmap />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
