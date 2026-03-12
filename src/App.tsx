@@ -11,6 +11,9 @@ import BusStopScreen from "./pages/BusStopScreen";
 import AdminDashboard from "./pages/AdminDashboard";
 import TripPlanner from "./pages/TripPlanner";
 import CrowdHeatmap from "./pages/CrowdHeatmap";
+import FareCalculator from "./pages/FareCalculator";
+import BusTracker from "./pages/BusTracker";
+import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +33,9 @@ const App = () => (
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/trip-planner" element={<TripPlanner />} />
             <Route path="/heatmap" element={<CrowdHeatmap />} />
+            <Route path="/fare-calculator" element={<FareCalculator />} />
+            <Route path="/tracker" element={<BusTracker />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

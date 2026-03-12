@@ -30,6 +30,10 @@ export const api = {
     req<HeatmapData>('GET', cityId ? `/heatmap?cityId=${cityId}` : '/heatmap'),
   getSkipSuggestions: (busId: string) =>
     req<SkipSuggestions>('GET', `/buses/${busId}/skip-suggestions`),
+  calculateFare: (fromStopId: string, toStopId: string) =>
+    req<FareResult>('POST', '/fare', { fromStopId, toStopId }),
+  getAnalytics: (cityId?: string) =>
+    req<AnalyticsData>('GET', cityId ? `/analytics?cityId=${cityId}` : '/analytics'),
 };
 
 export interface City {
@@ -192,4 +196,40 @@ export interface SkipSuggestions {
   suggestions: SkipSuggestion[];
   skipCount: number;
   estimatedTimeSavedMin: number;
+}
+
+export interface FareResult {
+  fromStop: StopWithCrowd;
+  toStop: StopWithCrowd;
+  route: { id: string; name: string; color: string; description: string };
+  city: City;
+  distanceKm: number;
+  stops: number;
+  fares: Record<string, { amount: number; label: string; icon: string; co2Kg: number }>;
+  savings: { vsAuto: number; vsCab: number; co2SavedVsCab: number; co2SavedVsAuto: number; yearlyVsCab: number };
+}
+
+export interface RouteOTP {
+  routeId: string; routeName: string; cityId: string; cityName: string; color: string;
+  otpPct: number; avgDelayMin: number; tripsToday: number; passengersToday: number;
+}
+
+export interface DriverPerf {
+  busId: string; busNumber: string; driver: string; cityId: string; cityName: string;
+  routeId: string; routeName: string; score: number; otpPct: number;
+  tripsCompleted: number; passengersServed: number; incidentsToday: number;
+}
+
+export interface CityAnalytic extends City {
+  routes: number; buses: number; stops: number; ridership: number;
+  co2Saved: number; avgOTP: number; currentWaiting: number;
+}
+
+export interface AnalyticsData {
+  weeklyRidership: { day: string; passengers: number; co2Saved: number }[];
+  routeOTP: RouteOTP[];
+  driverPerf: DriverPerf[];
+  cityBreakdown: CityAnalytic[];
+  hourlyDist: { hour: string; passengers: number }[];
+  summary: { totalPassengers: number; totalCO2Saved: number; avgOTP: number; totalTrips: number; activeRoutes: number; activeBuses: number };
 }

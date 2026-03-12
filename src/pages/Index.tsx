@@ -1,4 +1,4 @@
-import { Bus, Users, MapPin, Shield, Globe, Map, Activity, ArrowRight } from 'lucide-react';
+import { Bus, Users, MapPin, Shield, Globe, Map, Activity, ArrowRight, IndianRupee, Navigation, BarChart2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type SystemStats, type City } from '@/lib/api';
@@ -14,6 +14,9 @@ const ROLES = [
 const FEATURES = [
   { title: 'Trip Planner', description: 'Enter origin & destination coordinates. Find the best bus route with walk times, ETA & CO₂ comparison.', icon: Map, path: '/trip-planner', gradient: 'from-violet-500 to-purple-700', badge: 'New' },
   { title: 'Demand Heatmap', description: 'Live crowd intensity map + time-of-day demand forecasting for all stops across all cities.', icon: Activity, path: '/heatmap', gradient: 'from-pink-500 to-rose-700', badge: 'New' },
+  { title: 'Fare Calculator', description: 'Compare bus fare vs auto, cab & e-rickshaw for any two stops. See yearly savings and CO₂ difference.', icon: IndianRupee, path: '/fare-calculator', gradient: 'from-emerald-500 to-teal-700', badge: 'New' },
+  { title: 'Live Bus Tracker', description: 'Real-time map of all active buses — see positions, occupancy, on-time status updated every 6 seconds.', icon: Navigation, path: '/tracker', gradient: 'from-sky-500 to-blue-700', badge: 'New' },
+  { title: 'OTP & Analytics', description: 'On-time performance scorecards, driver rankings, weekly ridership trends and CO₂ saved system-wide.', icon: BarChart2, path: '/analytics', gradient: 'from-orange-500 to-amber-700', badge: 'New' },
 ];
 
 export default function Index() {

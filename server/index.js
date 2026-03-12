@@ -864,3 +864,143 @@ app.get('/api/buses/:busId/skip-suggestions', (req, res) => {
 
   res.json({ busId: bus.id, busNumber: bus.number, routeName: route.name, suggestions, skipCount, estimatedTimeSavedMin: +timeSaved.toFixed(1) });
 });
+
+// ─── Fare Structure ────────────────────────────────────────────────────────────
+const CITY_FARES = {
+  HYD: { base: 10, perKm: 1.5 }, BLR: { base: 5,  perKm: 2.0 },
+  CHN: { base: 5,  perKm: 1.5 }, MUM: { base: 6,  perKm: 2.0 },
+  DEL: { base: 10, perKm: 1.5 }, KOL: { base: 7,  perKm: 1.5 },
+  PUN: { base: 5,  perKm: 1.5 }, AHM: { base: 10, perKm: 2.0 },
+  JAI: { base: 10, perKm: 1.5 }, LKO: { base: 10, perKm: 1.5 },
+};
+
+// POST /api/fare  { fromStopId, toStopId }
+app.post('/api/fare', (req, res) => {
+  const { fromStopId, toStopId } = req.body;
+  if (!fromStopId || !toStopId) return res.status(400).json({ error: 'fromStopId and toStopId required' });
+
+  let fromStop = null, toStop = null, sharedRoute = null;
+
+  for (const route of ROUTES) {
+    const fi = route.stops.findIndex(s => s.id === fromStopId);
+    const ti = route.stops.findIndex(s => s.id === toStopId);
+    if (fi !== -1 && ti !== -1 && fi !== ti) {
+      fromStop = route.stops[fi];
+      toStop = route.stops[ti];
+      sharedRoute = route;
+      const segment = fi < ti ? route.stops.slice(fi, ti + 1) : route.stops.slice(ti, fi + 1);
+      const distKm = routeDistanceKm(segment);
+      const fares = CITY_FARES[route.cityId] || { base: 10, perKm: 1.5 };
+      const busFare = Math.ceil(fares.base + fares.perKm * distKm);
+      const autoFare = Math.ceil(30 + 15 * distKm);
+      const cabFare = Math.max(100, Math.ceil(80 + 12 * distKm));
+      const eRickFare = distKm <= 5 ? Math.ceil(20 + 5 * distKm) : null;
+      return res.json({
+        fromStop: enrichStop(fromStop),
+        toStop: enrichStop(toStop),
+        route: { id: route.id, name: route.name, color: route.color, description: route.description },
+        city: CITIES[route.cityId],
+        distanceKm: +distKm.toFixed(2),
+        stops: Math.abs(ti - fi),
+        fares: {
+          bus:  { amount: busFare,  label: 'RTC Bus',    icon: '🚌', co2Kg: +(distKm * 0.089).toFixed(3) },
+          auto: { amount: autoFare, label: 'Auto',       icon: '🛺', co2Kg: +(distKm * 0.12).toFixed(3) },
+          cab:  { amount: cabFare,  label: 'Cab (Ola/Uber)', icon: '🚕', co2Kg: +(distKm * 0.21).toFixed(3) },
+          ...(eRickFare !== null ? { eRick: { amount: eRickFare, label: 'E-Rickshaw', icon: '⚡', co2Kg: +(distKm * 0.03).toFixed(3) } } : {}),
+        },
+        savings: {
+          vsAuto: autoFare - busFare,
+          vsCab: cabFare - busFare,
+          co2SavedVsCab: +((0.21 - 0.089) * distKm).toFixed(3),
+          co2SavedVsAuto: +((0.12 - 0.089) * distKm).toFixed(3),
+          yearlyVsCab: Math.round((cabFare - busFare) * 22 * 12),
+        },
+      });
+    }
+  }
+  res.status(404).json({ error: 'No direct route connects these stops' });
+});
+
+// GET /api/analytics?cityId=HYD
+app.get('/api/analytics', (req, res) => {
+  const { cityId } = req.query;
+  const now = new Date();
+
+  // Weekly ridership — last 7 days (Mon–Sun multipliers)
+  const DAY_MULT = [1.1, 1.2, 1.0, 1.1, 1.3, 0.8, 0.7];
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const baseRidership = cityId
+    ? (ROUTES.filter(r => r.cityId === cityId).reduce((s, r) => s + r.stops.length, 0) * 12)
+    : (Object.keys(CITIES).length * 1800);
+
+  const weeklyRidership = DAY_NAMES.map((day, i) => ({
+    day,
+    passengers: Math.round(baseRidership * DAY_MULT[i] + Math.random() * 200),
+    co2Saved: +(baseRidership * DAY_MULT[i] * 0.121).toFixed(0),
+  }));
+
+  // OTP per route
+  let routes = cityId ? ROUTES.filter(r => r.cityId === cityId) : ROUTES;
+  const routeOTP = routes.map(r => ({
+    routeId: r.id,
+    routeName: r.name,
+    cityId: r.cityId,
+    cityName: CITIES[r.cityId]?.name,
+    color: r.color,
+    otpPct: Math.round(75 + Math.random() * 23),
+    avgDelayMin: +(Math.random() * 4).toFixed(1),
+    tripsToday: Math.round(8 + Math.random() * 12),
+    passengersToday: Math.round(200 + Math.random() * 600),
+  }));
+
+  // Driver performance
+  const driverPerf = buses
+    .filter(b => !cityId || b.cityId === cityId)
+    .map(b => ({
+      busId: b.id,
+      busNumber: b.number,
+      driver: b.driver,
+      cityId: b.cityId,
+      cityName: CITIES[b.cityId]?.name,
+      routeId: b.routeId,
+      routeName: routes.find(r => r.id === b.routeId)?.name ?? b.routeId,
+      score: Math.round(70 + Math.random() * 29),
+      otpPct: Math.round(75 + Math.random() * 24),
+      tripsCompleted: Math.round(3 + Math.random() * 7),
+      passengersServed: Math.round(80 + Math.random() * 300),
+      incidentsToday: Math.random() > 0.85 ? 1 : 0,
+    }));
+
+  // City breakdown
+  const cityBreakdown = Object.values(CITIES)
+    .filter(c => !cityId || c.id === cityId)
+    .map(city => {
+      const cr = ROUTES.filter(r => r.cityId === city.id);
+      const cb = buses.filter(b => b.cityId === city.id);
+      const stops = new Set(cr.flatMap(r => r.stops.map(s => s.id)));
+      const waiting = [...stops].reduce((s, sid) => s + (crowdCounts[sid] || 0), 0);
+      const ridership = Math.round(baseRidership / Object.keys(CITIES).length * (0.8 + Math.random() * 0.4));
+      return {
+        ...city,
+        routes: cr.length,
+        buses: cb.length,
+        stops: stops.size,
+        ridership,
+        co2Saved: +(ridership * 0.121).toFixed(0),
+        avgOTP: Math.round(78 + Math.random() * 20),
+        currentWaiting: waiting,
+      };
+    });
+
+  // Hourly distribution (0-23h)
+  const hourlyDist = Array.from({ length: 24 }, (_, h) => {
+    const mult = h < 5 ? 0.02 : h < 9 ? 0.11 : h < 12 ? 0.06 : h < 14 ? 0.07 : h < 17 ? 0.05 : h < 20 ? 0.12 : h < 22 ? 0.05 : 0.02;
+    return { hour: `${String(h).padStart(2,'0')}:00`, passengers: Math.round(baseRidership * mult) };
+  });
+
+  const totalPassengers = weeklyRidership.reduce((s, d) => s + d.passengers, 0);
+  const totalCO2Saved = weeklyRidership.reduce((s, d) => s + d.co2Saved, 0);
+  const avgOTP = Math.round(routeOTP.reduce((s, r) => s + r.otpPct, 0) / (routeOTP.length || 1));
+
+  res.json({ weeklyRidership, routeOTP, driverPerf, cityBreakdown, hourlyDist, summary: { totalPassengers, totalCO2Saved, avgOTP, totalTrips: Math.round(totalPassengers / 40), activeRoutes: routes.length, activeBuses: buses.filter(b => !cityId || b.cityId === cityId).length } });
+});
