@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "C1AtzJSO7lXG60556rZJ3"
+uri = "file://Smart_RTC_System_Documentation.md"
+type = "text"
+title = "Smart RTC System — Research Paper & Technical Documentation"
